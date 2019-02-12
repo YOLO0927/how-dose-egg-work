@@ -7,13 +7,13 @@
 遂有了这篇文章的诞生，旨在记录这个运行的大概过程，当然我也不保证自己写的会全是正确的，所以如果有错误希望大家指出，我会查看并仔细修改，共勉～
 
 #### so，本文将从几个角度分析 egg 是如何运行起来的
-1. 开发环境入口 egg-bin
-2. 线上测试以及生产环境入口 egg-scripts
+1. [ ] 开发环境入口 egg-bin
+2. [x] 线上测试以及生产环境入口 egg-scripts
    * egg-scripts start
    * egg-scripts stop
-3. egg-scripts 对于集群部署 cluster 模块的运用
+3. [ ] egg-scripts 对于集群部署 cluster 模块的运用
    * egg-cluster
-4. egg-core
+4. [ ] egg-core
    * 如何进行环境区分
    * 配置注入（插件与 config 配置的注入）
    * 继承 KoaApplication 启动应用
