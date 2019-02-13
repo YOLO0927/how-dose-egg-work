@@ -11,6 +11,7 @@
 2. [x] 线上测试以及生产环境入口 egg-scripts
    * egg-scripts start
    * egg-scripts stop
+   * 源码分析入口为 /egg-scirpts/summary.md（egg-scripts 解析大纲）
 3. [ ] egg-scripts 对于集群部署 cluster 模块的运用
    * egg-cluster
 4. [ ] egg-core
