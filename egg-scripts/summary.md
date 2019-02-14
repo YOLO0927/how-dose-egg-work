@@ -45,6 +45,7 @@
       constructor(rawArgv) {
         super(rawArgv);
 
+        // 合并 egg-scripts 中 /lib/helper.js 中的 helper 入内
         Object.assign(this.helper, helper);
 
         this.parserOptions = {
@@ -100,3 +101,5 @@
     通过以上的结论分析，我们完全搞明白的 egg-scripts 的运行机制，接下来我们针对分析 start 与 stop 脚本干了什么，来解决我们最初的疑问，egg-scripts start 与 egg-stop 做了什么，上面提到的 common-bin 的 properties 将会在其中出现，我不会再次做解释了，大家可以自行查看文档描述
 
     ** 下面分别查看 ./start.md 与 ./stop.md **
+
+    至于对 common-bin 源码感兴趣的同学就自己去翻阅啦，我也不可能一直解析到底层
