@@ -12,3 +12,11 @@ const options = JSON.parse(process.argv[2]);
 // 此时就是直接加载调用 egg 的 startCluster 方法启动，我们后续直接简单分析一下就知道了
 require(options.framework).startCluster(options);
 ```
+
+此后我们切到 egg 下查看 index.js 发现这样一行代码
+
+```js
+  exports.startCluster = require('egg-cluster').startCluster;
+```
+
+ok，得了您咧，线索跳至去简单分析 egg-cluster

@@ -7,13 +7,13 @@
 遂有了这篇文章的诞生，旨在记录这个运行的大概过程，当然我也不保证自己写的会全是正确的，所以如果有错误希望大家指出，我会查看并仔细修改，共勉～
 
 #### so，本文将从几个角度分析 egg 是如何运行起来的
-1. [ ] 开发环境入口 egg-bin
+1. [x] 开发环境入口 egg-bin
 2. [x] 线上测试以及生产环境入口 egg-scripts
    * egg-scripts start
    * egg-scripts stop
    * 源码分析入口为 /egg-scirpts/summary.md（egg-scripts 解析大纲）
-3. [ ] egg-scripts 对于集群部署 cluster 模块的运用
-   * egg-cluster
+3. [x] egg-scripts 对于集群部署 cluster 模块的运用
+   * egg-cluster（太特么多了）
 4. [ ] egg-core
    * 如何进行环境区分
    * 配置注入（插件与 config 配置的注入）
