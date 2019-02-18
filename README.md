@@ -13,7 +13,7 @@
    * egg-scripts stop
    * 源码分析入口为 /egg-scirpts/summary.md（egg-scripts 解析大纲）
 3. [x] egg-scripts 对于集群部署 cluster 模块的运用
-   * egg-cluster（太特么多了）
+   * egg-cluster（太特么多了，正在进行中...）
 4. [ ] egg-core
    * 如何进行环境区分
    * 配置注入（插件与 config 配置的注入）
