@@ -1,4 +1,4 @@
-先声明 egg-cluster 是个大坑，由于涉及到 IPC，master-agent-worker 进程间的协作与进程守护等问题，所以其实现较为复杂且代码量较大，看不下去的话看看文字说明的粗略分析都可以，看的下去的话就跟着我看源码吧，如果有错的地方就帮我指出来一下吧，我会仔细看看改的～～～
+先声明 egg-cluster 是个大坑，由于涉及到 IPC，master-agent-worker 进程间的协作与进程守护等问题，所以其实现较为复杂且代码量较大（其中涉及到 options.framework => egg => egg-core 中大量的调用，其中启动 agent 与 worker 服务时多会注入 egg-core 配置），看不下去的话看看文字说明的粗略分析都可以，看的下去的话就跟着我看源码吧，如果有错的地方就帮我指出来一下吧，我会仔细看看改的～～～
 
 由于 egg-cluster 中是调用的 Master 类的 ready 方法，所以我们在其内部先大概预览一下结构，搜索 ready 发现其为 [get-ready](https://www.npmjs.com/package/get-ready) 包，用处为帮助某个对象注册一个 ready 事件，ok 两个 collaborators 都是蚂蚁金服的，也就是说都是自己人写的，花 2 分钟看了下源码。。。其实就是一个简单监听发布模式：
 1. 当你 ready 的参数为 undefined 时返回一个 promise.resolve 并且 push 入调用栈；
@@ -8,10 +8,34 @@
 
 ok，我们开始分析 master.js 的构造函数，其实源码已经有很多备注了，我也只是为大家粗略分析
 
-1. agent 代理层的退出与重启监听 agent 退出；
-2. 监听 agent 层启动后，一次监听 agent-start 事件后利用 cluster 启动多个 worker 从进程；
-3. cluster 多个 worker 从进程并监听 端口成功启动 后发送子进程 pid 给 master 触发 app-start 事件进行 app 层进程间通信处理，并在最后触发 ready 调用栈中所有函数；
+1. 一旦开启 master 进程后 agent 代理层的启动退出与重启监听，监听 agent-start 改变 agent 各个状态以及 once 一次监听 agent-start 用于利用 cluster 启动多个 worker 从进程；
+2. 通过继承 egg-core 中的 lifecycle agent-start 事件的函数置入其 get-ready 中，在 agent 服务启动后，实例化 agent 服务时将触发 `[INIT_READY]()` 使 licecycle get-ready 存储的调用栈全部调用，向 master 进程发送消息触发 agent-start 事件，开始进行 forkAppWorkers（fork 多个应用从进程）；
+3. cluster 启动多个 worker 从进程并监听 端口成功启动 后发送子进程 pid 给 master 触发 app-start 事件进行 app 层进程间通信处理，并在最后触发 ready 调用栈中所有函数；
 4. 在这个过程中涉及到进程守护的处理，如监听各进程的 退出、断开连接、监听成功 等...
+
+整个周期正如文档中的此图
+```
+(new Master)
++---------+           +---------+          +---------+
+|  Master |           |  Agent  |          |  Worker |
++---------+           +----+----+          +----+----+
+     |      fork agent     |                    |
+     |(使用 detect-port 触发)|
+     +-------------------->|                    |
+     |      agent ready    |                    |
+     |(继承于 egg-core 的 lifecycle get-ready 触发 agent-start 事件)
+     |<--------------------+                    |
+     |                     |    fork worker     |
+     | (触发 agent-start 事件执行 forkAppWorkers) |
+     +----------------------------------------->|
+     |     worker ready    |                    |
+     |(由 forkAppWorkers 中 cluster 监听 listen 事件，当每个工作进程启动服务并 listen 成功时触发 app-start)
+     |<-----------------------------------------+
+     |      Egg ready      |                    |
+     +-------------------->|                    |
+     |      Egg ready      |                    |
+     +----------------------------------------->|
+```
 
 ```js
 class Master extends EventEmitter {
@@ -98,8 +122,10 @@ class Master extends EventEmitter {
 
     // 监听 agent-exit 事件，退出 agent 进程时会触发，阅读源码调试时可通过 ctrl + c 退出 egg-bin dev 即可触发
     this.on('agent-exit', this.onAgentExit.bind(this));
+    // 监听 agent-start 事件，触发时会判断从进程条件分发消息给指定层通知 agent 层服务启动成功
     this.on('agent-start', this.onAgentStart.bind(this));
     this.on('app-exit', this.onAppExit.bind(this));
+    // 利用 cluster 启动应用服务，监听 listening 事件，在调用 listen() 成功后，会触发 app-start 事件
     this.on('app-start', this.onAppStart.bind(this));
     this.on('reload-worker', this.onReload.bind(this));
 
@@ -111,6 +137,7 @@ class Master extends EventEmitter {
       if (port) this[REALPORT] = port;
     });
 
+    // 监听退出进程的不同情况，这里都是针对当前 master 进程的
     // https://nodejs.org/api/process.html#process_signal_events
     // https://en.wikipedia.org/wiki/Unix_signal
     // kill(2) Ctrl-C
@@ -122,7 +149,10 @@ class Master extends EventEmitter {
 
     process.once('exit', this.onExit.bind(this));
 
+    // 监听指定端口的启动，看了下 detect-port 的源码，当直接没有 port 参数时，端口默认为 0，即会随机分配一个可用端口，即会使用 net 模块启动 TCP 服务，默认监听 0.0.0.0:[port]
+    // 这里我们可以看出 master 是不左右任何业务的，它可以说只做进程分发，因为启动时 port 并不是我们应用监听的 port 而是随机一个，官方文档也是这么描述 master 进程的，ok，没毛病
     detectPort((err, port) => {
+
       /* istanbul ignore if */
       if (err) {
         err.name = 'ClusterPortConflictError';
@@ -131,6 +161,8 @@ class Master extends EventEmitter {
         process.exit(1);
       }
       this.options.clusterPort = port;
+      // 当前进程即为 master 进程（即使用 startCluster api 执行 master.js 的进程，由 detectPort 启动的 TCP 服务），此时当前的 master 进程触发启动 agent 进程，会去 fork 一个子进程 agentWorker
+      // 在启动完成后触发 agent-start 事件，所以我们再次回到上面，如何触发的解析在下面具体函数内
       this.forkAgentWorker();
     });
 
@@ -324,6 +356,7 @@ class Master extends EventEmitter {
   }
 
   forkAgentWorker() {
+    // 记录 agent 进程开始的时间戳，方便日志的记录
     this.agentStartTime = Date.now();
 
     const args = [ JSON.stringify(this.options) ];
@@ -333,8 +366,13 @@ class Master extends EventEmitter {
     const debugPort = process.env.EGG_AGENT_DEBUG_PORT || 5800;
     if (this.options.isDebug) opt.execArgv = process.execArgv.concat([ `--${semver.gte(process.version, '8.0.0') ? 'inspect' : 'debug'}-port=${debugPort}` ]);
 
-    // 如果严格模式下重启的 agent 进程实际上为启动了一个自动分配端口的本地服务 hostname 为 127.0.0.1，否则使用 app.config 中 cluster 的指定配置，若为指定则默认端口为 7001，hostname 为 ''
-    // 详细可查看 agentWorker 启动的子进程脚本 app_worker.js 中的实现
+    // 使用 child_process 模块 fork 一个子进程 agent，内部已经 debug 了 options 并将
+    // 在开发模式下改变 option 会进行 debug，其中的 graceful-process 用于监听该进程的退出，及优雅退出进程，其中做了各种情况退出、断线监听，并且由判断是否为 cluster 启动的 worker 进程
+    // 其中的 new Agent 来自于 egg/lib/agent.js 继承于 egg-core => this.close => egg-core/lib/lifecycle.js close => 删除所有监听事件，所以此时 agent 层已经进行了配置注入，如果配置连接出错了，那 agent 层都启动不起来的哦～
+    // 还需注意其中的一个 agent.ready 的回调，这个 ready 是来自 egg-core/lib/lifecycle.js 的，其中的注册事件向 master 发送了消息触发 agent-start 事件，从而触发 master 中的 onAgentStart 与 forkAppWorkers
+    // 我们之前提到过，这里的 get-ready 传入函数只是传入一个调用栈中存储，那么存入的触发 agent-start 到底在哪调用了，这就要看到上段提到的 egg-core/lib/lifecycle.js 了
+    // 1. 其构造函数中调用了 this[INIT_READY]，它是使用的 ready-callback 包，服务启动成功后将会触发其中的 ready 栈
+    // 2. 也就是说会触发最后的一个 this.ready(err || true)，即服务不出错则会触发 get-ready 的调用栈从而触发之前 agent.ready 内的进程通信，触发 agent-start 事件
     const agentWorker = childprocess.fork(this.getAgentWorkerFile(), args, opt);
     agentWorker.status = 'starting';
     agentWorker.id = ++this.agentWorkerIndex;
@@ -346,6 +384,7 @@ class Master extends EventEmitter {
     if (this.options.isDebug) {
       this.messenger.send({ to: 'parent', from: 'agent', action: 'debug', data: { debugPort, pid: agentWorker.pid } });
     }
+    // 传递 agent 进程中的消息
     // forwarding agent' message to messenger
     agentWorker.on('message', msg => {
       if (typeof msg === 'string') msg = { action: msg, data: msg };
@@ -372,22 +411,28 @@ class Master extends EventEmitter {
   }
 
   forkAppWorkers() {
+    // 记录启动的时间戳，方便后续日志输出
     this.appStartTime = Date.now();
     this.isAllAppWorkerStarted = false;
     this.startSuccessCount = 0;
 
     const args = [ JSON.stringify(this.options) ];
     this.log('[master] start appWorker with args %j', args);
+
+    // 使用 cfork 包启动 egg-cluster/lib/app_worker.js
     cfork({
+      // 这个脚本就简单很多了，根据 options 是 http 还是 https 来启动对应模块服务，最后 listen 参数指定的 port、hostname 即可，默认为 127.0.0.1:7001
       exec: this.getAppWorkerFile(),
       args,
       silent: false,
+      // 来自 egg-scripts 的 worker 进程数，默认是 os.cpus().length
       count: this.options.workers,
       // don't refork in local env
       refork: this.isProduction,
     });
 
     let debugPort = process.debugPort;
+    // 监听 worker 进程的 fork
     cluster.on('fork', worker => {
       worker.disableRefork = true;
       this.workerManager.setWorker(worker);
@@ -405,10 +450,12 @@ class Master extends EventEmitter {
         this.messenger.send({ to: 'parent', from: 'app', action: 'debug', data: { debugPort, pid: worker.process.pid } });
       }
     });
+    // 监听断线
     cluster.on('disconnect', worker => {
       this.logger.info('[master] app_worker#%s:%s disconnect, suicide: %s, state: %s, current workers: %j',
         worker.id, worker.process.pid, worker.exitedAfterDisconnect, worker.state, Object.keys(cluster.workers));
     });
+    // 监听工作进程的退出，退出时触发 app-exit
     cluster.on('exit', (worker, code, signal) => {
       this.messenger.send({
         action: 'app-exit',
@@ -417,6 +464,7 @@ class Master extends EventEmitter {
         from: 'app',
       });
     });
+    // 当工作进程调用 listen 的时候被触发，然后触发 app-start 事件，而 listen 就在 egg-cluster/lib/app_worker.js 中 server.listen 调用，这个触发实在比 agent 进程容易多了（在打字的我表示舒了一口气）
     cluster.on('listening', (worker, address) => {
       this.messenger.send({
         action: 'app-start',
