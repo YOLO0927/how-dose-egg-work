@@ -32,10 +32,14 @@ ok，我们开始分析 master.js 的构造函数，其实源码已经有很多�
      |(由 forkAppWorkers 中 cluster 监听 listen 事件，当每个工作进程启动服务并 listen 成功时触发 app-start)
      |<-----------------------------------------+
      |      Egg ready      |                    |
+     |(每个工作进程触发 app-start 的 onAppStart 函数，判断如果所有工作进程全部启动，则触发 egg-ready 周期发送给应用层)
      +-------------------->|                    |
      |      Egg ready      |                    |
+     |(最后 onAppStart 中触发 master 进程中的 get-ready 调用栈，输出 master 启动完毕的日志及时间，并将 egg-ready 动作通知所有层: parent app agent)
      +----------------------------------------->|
 ```
+
+最后分析完毕后，我们可以直接跳到去看 `this.options.framework` => `require('egg')`，去看看 egg 模块在干什么
 
 ```js
 class Master extends EventEmitter {
@@ -127,6 +131,7 @@ class Master extends EventEmitter {
     this.on('app-exit', this.onAppExit.bind(this));
     // 利用 cluster 启动应用服务，监听 listening 事件，在调用 listen() 成功后，会触发 app-start 事件
     this.on('app-start', this.onAppStart.bind(this));
+    // 重启工作进程
     this.on('reload-worker', this.onReload.bind(this));
 
     // fork app workers after agent started
@@ -372,7 +377,7 @@ class Master extends EventEmitter {
     // 还需注意其中的一个 agent.ready 的回调，这个 ready 是来自 egg-core/lib/lifecycle.js 的，其中的注册事件向 master 发送了消息触发 agent-start 事件，从而触发 master 中的 onAgentStart 与 forkAppWorkers
     // 我们之前提到过，这里的 get-ready 传入函数只是传入一个调用栈中存储，那么存入的触发 agent-start 到底在哪调用了，这就要看到上段提到的 egg-core/lib/lifecycle.js 了
     // 1. 其构造函数中调用了 this[INIT_READY]，它是使用的 ready-callback 包，服务启动成功后将会触发其中的 ready 栈
-    // 2. 也就是说会触发最后的一个 this.ready(err || true)，即服务不出错则会触发 get-ready 的调用栈从而触发之前 agent.ready 内的进程通信，触发 agent-start 事件
+    // 2. 也就是说会触发最后的一个 this.ready(err || true)，即服务不出错则会触发 get-ready 的调用栈从而触发之前 agent_work.js 中 agent.ready 内的进程通信，触发 agent-start 事件
     const agentWorker = childprocess.fork(this.getAgentWorkerFile(), args, opt);
     agentWorker.status = 'starting';
     agentWorker.id = ++this.agentWorkerIndex;
